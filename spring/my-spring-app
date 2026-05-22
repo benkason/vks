@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: my-spring-app   # Name of your application
+
+server:
+  port: 8081              # Custom port (default is 8080)
+
+logging:
+  level:
+    root: info            # Default logging level
+    org.springframework: warn  # Specific level for Spring framework

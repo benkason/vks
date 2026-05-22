@@ -1,0 +1,62 @@
+r---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: wavefront-proxy
+    name: wavefront-proxy
+  name: wavefront-proxy
+  namespace: wavefront-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wavefront-proxy
+  strategy:
+    type: "Recreate"
+  template:
+    metadata:
+      labels:
+        app: wavefront-proxy
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - wavefront-proxy
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: wavefront-proxy
+        image: wavefronthq/proxy:12.3
+        imagePullPolicy: Always
+        envFrom:
+        - secretRef:
+            name: wavefront-token
+        env:
+        - name: WAVEFRONT_URL
+          value: https://binz.wavefront.com/api
+        ports:
+        - containerPort: 2878
+          protocol: TCP
+        securityContext:
+          privileged: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wavefront-proxy
+  labels:
+    app: wavefront-proxy
+  namespace: wavefront-system
+spec:
+  type: LoadBalancer
+  ports:
+  - name: wavefront
+    port: 2878
+    protocol: TCP
+  selector:
+    app: wavefront-proxy

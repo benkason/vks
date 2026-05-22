@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxy-preprocessor-config
+  namespace: wavefront-system
+data:
+  preprocessor_rules.yaml: |
+    ---
+    '2878':
+    # Drop Telegraf k8s metrics because they are
+    # duplicates of the metrics sent by the wavefront-collector
+    - rule    : drop-telegraf-kubernetes-metrics
+      action  : block
+      scope   : metricName
+      match   : 'telegraf.kubernetes.*'
+    
+    '4318':
+    # Adding tag to spans for indexing
+    # Adding http.url tag 
+    - rule    : url-tag-addition-to-span
+      action  : spanAddTagIfNotExists
+      key     : "http.url"
+      value   : "DoesNotExists"
+
+    - rule    : target-tag-addition-to-span
+      action  : spanAddTagIfNotExists
+      key     : "http.target"
+      value   : "DoesNotExists"

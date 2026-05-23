@@ -33,6 +33,13 @@ spec:
       - name: wavefront-proxy
         image: wavefronthq/proxy:12.3
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
         envFrom:
         - secretRef:
             name: wavefront-token

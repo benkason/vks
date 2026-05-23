@@ -1,8 +1,9 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: my-webapp
-namespace: ben
+  namespace: ben
 spec:
   replicas: 3
   selector:
@@ -18,10 +19,12 @@ spec:
         image: nginx:1.7.9
         ports:
         - containerPort: 80
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: my-webapp-service
+  namespace: ben
 spec:
   selector:
     app: my-webapp

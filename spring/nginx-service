@@ -3,7 +3,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: my-webapp-service
-  namespace: argocd
+  namespace: ben2
 spec:
   selector:
     app: my-webapp

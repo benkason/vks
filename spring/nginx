@@ -1,22 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-deployment
-  namespace: wavefront-system
-  labels:
-    app: nginx
+  name: my-webapp
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: nginx
+      app: my-webapp
   template:
     metadata:
       labels:
-        app: nginx
+        app: my-webapp
     spec:
       containers:
-      - name: nginx
-        image: nginx:latest
+      - name: my-webapp
+        image: nginx:1.7.9
         ports:
         - containerPort: 80

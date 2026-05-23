@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: my-webapp
-  namespace: ben
+  namespace: argocd
 spec:
   replicas: 3
   selector:
@@ -24,7 +24,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: my-webapp-service
-  namespace: ben
+  namespace: argocd
 spec:
   selector:
     app: my-webapp

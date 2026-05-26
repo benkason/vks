@@ -1,0 +1,16 @@
+---
+apiVersion: pksapi.io/v1beta1
+kind: ClusterMetricSink
+metadata:
+  name: default
+  namespace: pks-system
+spec:
+  inputs:
+  - type: net_response
+    protocol: tcp
+    address: "ikexa1-scan9.mtn.com.ng:1521"
+    fielddrop: ["result_type", "string_found"] 
+  outputs:
+  - type: wavefront
+    url: http://10.1.47.126:2878
+    prefix: "telegraf."

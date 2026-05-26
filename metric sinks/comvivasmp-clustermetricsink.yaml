@@ -1,0 +1,112 @@
+---
+apiVersion: pksapi.io/v1beta1
+kind: ClusterMetricSink
+metadata:
+  name: default
+  namespace: pks-system
+spec:
+  inputs:
+  - type: net_response
+    protocol: tcp
+    address: "ikexa1-scan9.mtn.com.ng:1521"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "ojexa1-scan9.mtn.com.ng:1521"
+    fielddrop: ["result_type", "string_found"]     
+  - type: net_response
+    protocol: tcp
+    address: "10.199.99.136:3868"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "10.226.99.21:3868"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "10.226.99.29:3868"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "callerfeelsupport.mtnnigeria.net:8080"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "confirmation.gameloft.com:80"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "datasync-ng.lms.lumosglobal.com:8082"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "mtn-ng-vpn.aws.betpawa.com:9090"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "mtn.pisimobile.net"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "tapestry.com.ng"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "isiregnfs.mtn.com.ng"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "fileservices08.mtn.com.ng"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "prod-nigeria.api.mtn.com"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "crm.mtnnigeria.net"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "10.1.178.213:9081"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "10.206.140.162:12156"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "10.206.140.162:12156"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "prod-nigeria.api.mtn.com"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "172.24.32.68:25"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "185.73.37.37:8091"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "89.107.58.138:9099"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "unas-nfs1.mtn.com.ng:2049"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "isiregnfs.mtn.com.ng:2049"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "fileservices08.mtn.com.ng:2049"
+    fielddrop: ["result_type", "string_found"]
+  outputs:
+  - type: wavefront
+    url: http://10.1.47.126:2878
+    prefix: "telegraf."

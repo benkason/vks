@@ -1,0 +1,21 @@
+---
+apiVersion: pksapi.io/v1beta1
+kind: ClusterMetricSink
+metadata:
+  name: default
+  namespace: pks-system
+spec:
+  inputs:
+  - type: net_response
+    protocol: tcp
+    address: "binz.wavefront.com:443"
+    fielddrop: ["result_type", "string_found"]
+  - type: http_response
+    urls:
+    - "https://binz.wavefront.com/api"
+    method: GET
+    follow_redirects: true
+  outputs:
+  - type: wavefront
+    url: http://10.1.47.126:2878
+    prefix: "telegraf."

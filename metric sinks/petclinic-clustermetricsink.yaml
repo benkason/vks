@@ -1,0 +1,36 @@
+---
+apiVersion: pksapi.io/v1beta1
+kind: ClusterMetricSink
+metadata:
+  name: default
+  namespace: pks-system
+spec:
+  inputs:
+  - type: net_response
+    protocol: tcp
+    address: "github.com:443"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "10.1.98.165:27018"
+    fielddrop: ["result_type", "string_found"]
+  - type: net_response
+    protocol: tcp
+    address: "10.1.76.200:27018"
+    fielddrop: ["result_type", "string_found"]
+  - type: http_response
+    urls:
+    - "https://github.com"
+    method: GET
+    follow_redirects: true
+  - type: http_response
+    urls:
+    - "http://10.197.88.66:8913/Air"
+    method: GET
+    follow_redirects: true
+  outputs:
+  - type: wavefront
+    url: http://10.1.29.110:2878
+    prefix: "telegraf."
+# telegraf_agent_config:
+#   interval:  INTERVAL-LENGTH

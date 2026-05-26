@@ -1,0 +1,751 @@
+---
+resources:
+- name: platform-automation-tasks
+  type: s3
+  source:
+    access_key_id: ((s3_access_key_id))
+    bucket: ((s3_pivnet_products_bucket))
+    endpoint: ((s3_endpoint))
+    secret_access_key: ((s3_secret_access_key))
+    regexp: platform-automation-tasks-(.*).zip
+
+- name: platform-automation-image
+  type: s3
+  source:
+    access_key_id: ((s3_access_key_id))
+    bucket: ((s3_pivnet_products_bucket))
+    endpoint: ((s3_endpoint))
+    secret_access_key: ((s3_secret_access_key))
+    regexp: platform-automation-image-(.*).tgz
+
+# - name: pks-product
+#   type: s3
+#   source:
+#     access_key_id: ((s3_access_key_id))
+#     bucket: ((s3_pivnet_products_bucket))
+#     endpoint: ((s3_endpoint))
+#     secret_access_key: ((s3_secret_access_key))
+#     regexp: \[pivotal-container-service,(.*)\]pivotal-container-service-.*\.pivotal
+
+- name: installation
+  type: s3
+  source:
+    access_key_id: ((s3_access_key_id))
+    bucket: ((s3_installation_bucket))
+    endpoint: ((s3_endpoint))
+    secret_access_key: ((s3_secret_access_key))
+    regexp: ((foundation))-installation-(.*).zip
+
+- name: state
+  type: s3
+  source:
+    access_key_id: ((s3_access_key_id))
+    bucket: ((s3_foundation_state_bucket))
+    endpoint: ((s3_endpoint))
+    secret_access_key: ((s3_secret_access_key))
+    regexp: state-((foundation))-(.*).yml
+    initial_content_text: '{}'
+    initial_path: state-((foundation))-0.yml
+    
+- name: configuration
+  type: git
+  source:
+    private_key: ((platform_repo_private_key.private_key))
+    uri: ((platform_repo_uri))
+    branch: main
+    submodules: all
+    depth: 1
+
+# triggers used to have jobs do something in a timely manner
+- name: one-time-trigger
+  type: time
+  source:
+    interval: 999999h
+
+- name: daily-trigger
+  type: time
+  source:
+    interval: 24h
+
+# This task is used in multiple jobs
+# The yaml anchor "*prepare-tasks-with-secrets" is used in its place
+prepare-tasks-with-secrets: &prepare-tasks-with-secrets
+  image: platform-automation-image
+  file: platform-automation-tasks/tasks/prepare-tasks-with-secrets.yml
+  input_mapping:
+    tasks: platform-automation-tasks
+    config: configuration
+    vars: configuration
+  params:
+    CONFIG_PATHS: config/concourse/foundations/config config/concourse/foundations/((foundation))/config
+    VARS_PATHS: >
+      vars/concourse/foundations/((foundation))/vars
+      vars/concourse/foundations/vars
+  output_mapping:
+    tasks: platform-automation-tasks
+
+jobs:
+- name: test-platform-automation
+  serial: true
+  plan:
+    - in_parallel:
+      - get: platform-automation-image
+        params:
+          unpack: true
+      - get: platform-automation-tasks
+        params:
+          unpack: true
+      - get: configuration
+    - task: test-interpolate
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/test-interpolate.yml
+      params:
+        CONFIG_FILE: foundations/((foundation))/config/download-tas.yml
+        SKIP_MISSING: true
+      input_mapping:
+        config: configuration
+    - task: test
+      file: platform-automation-tasks/tasks/test.yml
+      image: platform-automation-image
+
+- name: install-opsman
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: one-time-trigger
+      trigger: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: configuration
+    - get: state
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: download-opsman-image
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    input_mapping:
+      config: configuration
+      vars: configuration
+    params:
+      CONFIG_FILE: concourse/foundations/((foundation))/config/download-opsman.yml
+      VARS_FILES: vars/concourse/foundations/((foundation))/vars/versions.yml vars/concourse/foundations/vars/global.yml
+      SOURCE: s3
+    output_mapping:
+      downloaded-product: opsman-image
+  - task: create-vm
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/create-vm.yml
+    input_mapping:
+      image: opsman-image
+      config: configuration
+      vars: configuration
+    params:
+      OPSMAN_CONFIG_FILE: concourse/foundations/((foundation))/config/opsman.yml
+      STATE_FILE: state-((foundation))-$timestamp.yml
+      VARS_FILES: vars/concourse/foundations/((foundation))/vars/director.yml
+    ensure: &put-state
+      do:
+      - put: state
+        params:
+          file: generated-state/state-((foundation))-*.yml
+  - task: configure-authentication
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-authentication.yml
+    attempts: 10
+    input_mapping:
+      env: configuration
+      config: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      AUTH_CONFIG_FILE: concourse/foundations/config/auth.yml
+      VARS_FILES: config/concourse/foundations/prod01/vars/director.yml
+  - task: configure-opsman
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-opsman.yml
+    input_mapping:
+      env: configuration
+      config: configuration
+      vars: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      OPSMAN_CONFIG_FILE: concourse/foundations/((foundation))/config/opsman.yml
+      VARS_FILES: vars/concourse/foundations/((foundation))/vars/director.yml
+  - task: configure-director
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-director.yml
+    input_mapping:
+      config: configuration
+      env: configuration
+      vars: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      DIRECTOR_CONFIG_FILE: concourse/foundations/((foundation))/config/director.yml
+      VARS_FILES: >
+        vars/concourse/foundations/((foundation))/vars/director.yml
+        vars/concourse/foundations/((foundation))/vars/pks.yml 
+  - task: apply-director-changes
+    image: platform-automation-image
+    attempts: 3
+    file: platform-automation-tasks/tasks/apply-director-changes.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: export-installation
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/export-installation.yml
+    input_mapping:
+      env: configuration
+    params:
+      INSTALLATION_FILE: ((foundation))-installation-$timestamp.zip
+      ENV_FILE: concourse/foundations/config/env.yml
+  - put: installation
+    params:
+      file: installation/((foundation))-installation*.zip
+
+- name: export-installation
+  serial_groups: [ install ]
+  serial: true
+  plan:
+  - in_parallel:
+    - get: state
+      passed: [ install-opsman ]
+    - get: daily-trigger
+      trigger: true
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: configuration
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: revert-staged-changes
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/revert-staged-changes.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: export-installation
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/export-installation.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      INSTALLATION_FILE: ((foundation))-installation-$timestamp.zip
+  - put: installation
+    params:
+      file: installation/((foundation))-installation*.zip
+
+- name: upgrade-opsman
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+      trigger: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: installation
+      passed: [ export-installation ]
+    - get: configuration
+    - get: state
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: download-opsman-image
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    input_mapping:
+      config: configuration
+      vars: configuration
+    params:
+      CONFIG_FILE: concourse/foundations/((foundation))/config/download-opsman.yml
+      VARS_FILES: vars/concourse/foundations/((foundation))/vars/versions.yml
+      SOURCE: s3
+    output_mapping:
+      downloaded-product: opsman-image
+  - task: upgrade-opsman
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upgrade-opsman.yml
+    input_mapping:
+      image: opsman-image
+      config: configuration
+      env: configuration
+      vars: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      OPSMAN_CONFIG_FILE: concourse/foundations/((foundation))/config/opsman.yml
+      STATE_FILE: state-((foundation))-$timestamp.yml
+      INSTALLATION_FILE: ((foundation))-installation*.zip
+      VARS_FILES: vars/concourse/foundations/((foundation))/vars/director.yml
+    ensure: *put-state
+  - task: configure-director
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-director.yml
+    input_mapping:
+      config: configuration
+      env: configuration
+      vars: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      DIRECTOR_CONFIG_FILE: concourse/foundations/((foundation))/config/director.yml
+      VARS_FILES: >
+        vars/concourse/foundations/((foundation))/vars/director.yml
+        vars/concourse/foundations/((foundation))/vars/pks.yml 
+  - task: apply-director-changes
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/apply-director-changes.yml
+    attempts: 3
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: export-installation
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/export-installation.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      INSTALLATION_FILE: ((foundation))-installation-$timestamp.zip
+  - put: installation
+    params:
+      file: installation/((foundation))-installation*.zip
+
+- name: download-upload-and-stage-pks
+  serial: true
+  serial_groups: [ products ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+      trigger: true
+      passed: [ "upgrade-opsman" ]
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: configuration
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: download-pks
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    input_mapping:
+      config: configuration
+      vars: configuration
+    params:
+      CONFIG_FILE: concourse/foundations/((foundation))/config/download-pks.yml
+      VARS_FILES: vars/concourse/foundations/((foundation))/vars/versions.yml
+      SOURCE: s3
+    output_mapping:
+      downloaded-product: pks-product
+      downloaded-stemcell: pks-stemcell
+  - task: upload-and-stage-pks
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upload-and-stage-product.yml
+    input_mapping:
+      product: pks-product
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: upload-pks-stemcell
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upload-stemcell.yml
+    input_mapping:
+      env: configuration
+      stemcell: pks-stemcell
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+
+- name: configure-pks
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+      passed:
+      - download-upload-and-stage-pks
+      trigger: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: configuration
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: configure-pks
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-product.yml
+    input_mapping:
+      config: configuration
+      env: configuration
+      vars: configuration
+    params:
+      CONFIG_FILE: concourse/foundations/((foundation))/config/pks.yml
+      ENV_FILE: concourse/foundations/config/env.yml
+      VARS_FILES: >
+        vars/concourse/foundations/((foundation))/vars/director.yml
+        vars/concourse/foundations/((foundation))/vars/pks.yml
+
+- name: apply-product-changes
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+      passed:
+      - configure-pks
+      trigger: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: configuration
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: pre-deploy-check
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/pre-deploy-check.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: apply-product-changes
+    attempts: 3
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/apply-changes.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: check-pending-changes
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/check-pending-changes.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      ALLOW_PENDING_CHANGES: true
+  - task: export-installation
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/export-installation.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      INSTALLATION_FILE: ((foundation))-installation-$timestamp.zip
+  - put: installation
+    params:
+      file: installation/((foundation))-installation*.zip
+
+- name: configure-harbor
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+      passed:
+      - apply-product-changes
+      trigger: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: configuration
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: configure-harbor
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-product.yml
+    input_mapping:
+      config: configuration
+      env: configuration
+      vars: configuration
+    params:
+      CONFIG_FILE: concourse/foundations/((foundation))/config/harbor.yml
+      ENV_FILE: concourse/foundations/config/env.yml
+      VARS_FILES: >
+        vars/concourse/foundations/((foundation))/vars/director.yml
+        vars/concourse/foundations/((foundation))/vars/harbor.yml
+
+- name: apply-harbor-changes
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+      passed:
+      - configure-harbor
+      trigger: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: configuration
+  - task: prepare-tasks-with-secrets
+    <<: *prepare-tasks-with-secrets
+  - task: pre-deploy-check
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/pre-deploy-check.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: apply-harbor-changes
+    attempts: 3
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/apply-changes.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+  - task: check-pending-changes
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/check-pending-changes.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      ALLOW_PENDING_CHANGES: true
+  - task: export-installation
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/export-installation.yml
+    input_mapping:
+      env: configuration
+    params:
+      ENV_FILE: concourse/foundations/config/env.yml
+      INSTALLATION_FILE: ((foundation))-installation-$timestamp.zip
+  - put: installation
+    params:
+      file: installation/((foundation))-installation*.zip
+
+- name: expiring-certificates
+  serial: true
+  serial_groups: [ install ]
+  plan:
+    - in_parallel:
+      - get: daily-trigger
+        trigger: true
+      - get: platform-automation-image
+        params:
+          unpack: true
+      - get: platform-automation-tasks
+        params:
+          unpack: true
+      - get: configuration
+      - get: state
+    - task: prepare-tasks-with-secrets
+      <<: *prepare-tasks-with-secrets
+    - task: expiring-certificates
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/expiring-certificates.yml
+      input_mapping:
+        env: configuration
+      params:
+        ENV_FILE: concourse/foundations/config/env.yml
+        EXPIRES_WITHIN: 2m
+
+# - name: delete-installation
+#   serial: true
+#   serial_groups: [install]
+#   plan:
+#     - in_parallel:
+#       - get: platform-automation-image
+#         params:
+#           unpack: true
+#       - get: platform-automation-tasks
+#         params:
+#           unpack: true
+#       - get: configuration
+#       - get: state
+#     - task: prepare-tasks-with-secrets
+#       <<: *prepare-tasks-with-secrets
+#     - task: delete-installation
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/delete-installation.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#     - task: delete-vm
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/delete-vm.yml
+#       input_mapping:
+#         config: configuration
+#       params:
+#         OPSMAN_CONFIG_FILE: concourse/foundations/((foundation))/config/opsman.yml
+#         STATE_FILE: state-((foundation))-*.yml
+#       ensure:
+#         do:
+#         - put: state
+#           params:
+#             file: generated-state/state-((foundation))-*.yml
+
+# - name: create-root-ca
+#   plan:
+#     - in_parallel:
+#         - get: platform-automation-image
+#           params:
+#             unpack: true
+#         - get: platform-automation-tasks
+#           params:
+#             unpack: true
+#         - get: configuration
+#     - task: prepare-tasks-with-secrets
+#       <<: *prepare-tasks-with-secrets
+#     - task: create-root-ca
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/configure-new-certificate-authority.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+
+# - name: apply-new-ca
+#   serial: true
+#   plan:
+#     - in_parallel:
+#         - get: platform-automation-image
+#           params:
+#             unpack: true
+#           passed:
+#             - create-root-ca
+#         - get: platform-automation-tasks
+#           params:
+#             unpack: true
+#         - get: configuration
+#     - task: prepare-tasks-with-secrets
+#       <<: *prepare-tasks-with-secrets
+#     - task: pre-deploy-check
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/pre-deploy-check.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#     - task: apply-product-changes
+#       attempts: 3
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/apply-changes.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#         SELECTIVE_DEPLOY_PRODUCTS: "cf,p-bosh,p-healthwatch2,p-healthwatch2-pas-exporter,pivotal-telemetry-om"
+
+# - name: activate-new-ca-and-regenerate-certs
+#   serial: true
+#   plan:
+#     - in_parallel:
+#         - get: platform-automation-image
+#           params:
+#             unpack: true
+#           passed:
+#             - apply-new-ca
+#         - get: platform-automation-tasks
+#           params:
+#             unpack: true
+#         - get: configuration
+#     - task: prepare-tasks-with-secrets
+#       <<: *prepare-tasks-with-secrets
+#     - task: activate-new-ca
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/activate-certificate-authority.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#     - task: regenerate-certificates
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/regenerate-certificates.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+
+# - name: apply-certificates
+#   serial: true
+#   plan:
+#     - in_parallel:
+#         - get: platform-automation-image
+#           params:
+#             unpack: true
+#           passed:
+#             - activate-new-ca-and-regenerate-certs
+#         - get: platform-automation-tasks
+#           params:
+#             unpack: true
+#         - get: configuration
+#     - task: prepare-tasks-with-secrets
+#       <<: *prepare-tasks-with-secrets
+#     - task: pre-deploy-check
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/pre-deploy-check.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#     - task: apply-product-changes
+#       attempts: 3
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/apply-changes.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#         SELECTIVE_DEPLOY_PRODUCTS: "cf,p-bosh,p-healthwatch2,p-healthwatch2-pas-exporter,pivotal-telemetry-om"
+
+# - name: cleanup-ca-certificate-authorities
+#   serial: true
+#   plan:
+#     - in_parallel:
+#         - get: platform-automation-image
+#           params:
+#             unpack: true
+#           passed:
+#             - apply-certificates
+#         - get: platform-automation-tasks
+#           params:
+#             unpack: true
+#         - get: configuration
+#     - task: prepare-tasks-with-secrets
+#       <<: *prepare-tasks-with-secrets
+#     - task: delete-certificate-authority
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/delete-certificate-authority.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#     - task: pre-deploy-check
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/pre-deploy-check.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#     - task: apply-product-changes
+#       attempts: 3
+#       image: platform-automation-image
+#       file: platform-automation-tasks/tasks/apply-changes.yml
+#       input_mapping:
+#         env: configuration
+#       params:
+#         ENV_FILE: concourse/foundations/config/env.yml
+#         SELECTIVE_DEPLOY_PRODUCTS: "cf,p-bosh,p-healthwatch2,p-healthwatch2-pas-exporter,pivotal-telemetry-om"
